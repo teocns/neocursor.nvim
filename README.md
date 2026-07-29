@@ -54,8 +54,8 @@ at the *same* latency, as Cursor itself.
   runs through it and fetches its own deps. Nothing to `pip install`.
 
 Works on **macOS, Linux and Windows**; the sidecar finds Cursor's session
-wherever your platform puts it. Unusual install? See
-[Troubleshooting](#cursor-cant-be-found).
+wherever your platform puts it. Portable install, Flatpak/Snap, or WSL? See
+[Cursor can't be found](./docs/troubleshooting.md#cursor-cant-be-found).
 
 ---
 
@@ -85,75 +85,9 @@ vim.pack.add { "https://github.com/teocns/neocursor.nvim" }
 require("neocursor").setup {}
 ```
 
-<details>
-<summary><b>vim.pack: full parity with the lazy.nvim spec</b> (pre-warm + lazy start)</summary>
-
-<br>
-
-The lazy.nvim spec above pre-warms the sidecar's Python deps at install time
-(`build`) and defers startup to insert mode (`event`). The vim.pack equivalent:
-
-```lua
--- pre-warm the sidecar's deps on install/update (lazy.nvim's `build`).
--- Register this BEFORE vim.pack.add so it sees the initial install.
-vim.api.nvim_create_autocmd("PackChanged", {
-  callback = function(ev)
-    if ev.data.spec.name ~= "neocursor.nvim" then return end
-    if ev.data.kind == "install" or ev.data.kind == "update" then
-      vim.system { "uv", "run", "--with", "httpx[http2]", "python", "-c", "import httpx" }
-    end
-  end,
-})
-
-vim.pack.add { "https://github.com/teocns/neocursor.nvim" }
-
--- start on first insert (lazy.nvim's `event = "InsertEnter"`)
-vim.api.nvim_create_autocmd("InsertEnter", {
-  once = true,
-  callback = function() require("neocursor").setup {} end,
-})
-```
-
-Skipping the pre-warm is fine — the sidecar fetches its own deps on first
-launch; the first suggestion just arrives a few seconds later.
-
-</details>
-
-<details>
-<summary><b>Letting nvim-cmp / blink.cmp own <code>&lt;Tab&gt;</code></b></summary>
-
-<br>
-
-If another plugin already maps `<Tab>`, set `map_tab = false` and fall through
-to neocursor from your own handler:
-
-```lua
-{ "teocns/neocursor.nvim", event = "InsertEnter", opts = { map_tab = false } }
-
--- in your <Tab> mapping, try neocursor first:
-if require("neocursor").accept() then return end
--- …otherwise let cmp/blink handle it
-```
-
-</details>
-
-<details>
-<summary><b>Pinning a version</b></summary>
-
-<br>
-
-```lua
-{ "teocns/neocursor.nvim", version = "*" } -- latest tagged release instead of main
-```
-
-With vim.pack, `version` takes a tag, branch, commit hash, or
-`vim.version.range()`:
-
-```lua
-vim.pack.add { { src = "https://github.com/teocns/neocursor.nvim", version = vim.version.range "*" } }
-```
-
-</details>
+**More setups** → [docs/installation.md](./docs/installation.md): full vim.pack
+parity with the lazy.nvim spec, coexisting with nvim-cmp / blink.cmp, and
+pinning a version.
 
 ---
 
@@ -213,33 +147,12 @@ require("neocursor").setup({
 | `map_tab` | `boolean` | `false` leaves `<Tab>` unmapped so nvim-cmp / blink.cmp can own it. |
 | `map_partial` | `string` \| `false` | Key for word-by-word accept. `false` disables it. |
 | `filetypes` | `string[]` \| `nil` | Allow-list, e.g. `{ "python", "lua" }`. `nil` means every normal buffer. |
-| `show_hints` | `boolean` \| `table` | Hint chrome — see below. `false` hides it entirely. |
+| `show_hints` | `boolean` \| `table` | Hint chrome. `false` hides it; a table hides one surface. |
 | `sidecar_cmd` | `string[]` | How the Python sidecar launches. Override only for unusual setups. |
 
-<details>
-<summary><b>Hiding the hint chrome</b> — <code>show_hints</code></summary>
-
-<br>
-
-neocursor paints two labels. Suggestions themselves are never affected — ghost
-text, diffs, and every `<Tab>` behavior are identical either way.
-
-| Surface | Looks like | Hiding it costs |
-|---|---|---|
-| `edit` | `⟪neocursor · <Tab> accept⟫` | nothing; the diff beside it already shows the change |
-| `prediction` | `⟪<Tab> → L42⟫` | the only on-screen sign a jump is queued |
-
-```lua
-show_hints = false                    -- hide both
-show_hints = { edit = false }         -- hide the label, keep the jump pill
-show_hints = { prediction = false }   -- hide the pill, keep the label
-```
-
-Turning the prediction pill off makes pending jumps invisible: `<Tab>` still
-jumps, you just won't see where until it does. `:NeocursorDebug` prints the
-resolved setting.
-
-</details>
+**Full reference** → [docs/configuration.md](./docs/configuration.md): what each
+option does, why `debounce` is usually overridden, and which hint surface you
+actually want to keep.
 
 ---
 
@@ -301,48 +214,9 @@ See [`NOTICE`](./NOTICE) for rendering-technique attribution.
 Start with `:NeocursorDebug` (resolved config, sidecar state, last error) and
 `:NeocursorLog` (live event stream). Between them, most problems name themselves.
 
-### Cursor can't be found
-
-The sidecar looks for Cursor's signed-in session at your platform's data dir:
-
-| | Cursor data dir |
-|---|---|
-| macOS | `~/Library/Application Support/Cursor` |
-| Linux | `$XDG_CONFIG_HOME/Cursor` → `~/.config/Cursor` |
-| Windows | `%APPDATA%\Cursor` |
-
-Insiders builds and the lowercase `cursor` directory some Linux packages create
-are detected too. If your install lives somewhere else — a portable copy, a
-Flatpak/Snap sandbox, or Windows-side Cursor seen from WSL — point the sidecar
-at it:
-
-```sh
-export CURSOR_CONFIG_DIR="/mnt/c/Users/me/AppData/Roaming/Cursor"   # WSL example
-# or aim straight at the SQLite file:
-export CURSOR_STATE_DB_PATH="/path/to/User/globalStorage/state.vscdb"
-```
-
-To see exactly what's being checked:
-
-```sh
-uv run cursor_paths.py   # in the plugin directory
-```
-
-That prints every candidate path and which one won — paste it into a bug report.
-
-### No suggestions appear
-
-- Confirm the sidecar came up: `:NeocursorDebug` → `sidecar job` should say `READY`.
-- neocursor stays deliberately quiet while you read or navigate; type a little
-  and pause. `:NeocursorSuggest` forces a request.
-- Check `filetypes` isn't excluding the buffer, and that `buftype` is empty
-  (special buffers are skipped by design).
-
-### `<Tab>` does nothing
-
-Another plugin almost certainly owns the mapping. Set `map_tab = false` and call
-`require("neocursor").accept()` from your own handler — see
-[Installation](#installation).
+**Full guide** → [docs/troubleshooting.md](./docs/troubleshooting.md): Cursor
+can't be found, the sidecar won't start, no suggestions appear, `<Tab>` does
+nothing, and what to include in a bug report.
 
 ---
 

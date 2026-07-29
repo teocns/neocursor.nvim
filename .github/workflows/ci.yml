@@ -36,6 +36,9 @@ jobs:
           neovim: true
           version: stable
 
+      - name: docs links (every relative link and anchor resolves)
+        run: python test/docs_links.py
+
       - name: path resolution (all three platform layouts, faked)
         run: python test/paths_spec.py
 

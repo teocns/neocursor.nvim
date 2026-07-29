@@ -41,9 +41,15 @@ lua/neocursor/
 sidecar.py        stdio bridge: Neovim JSON ⇄ Cursor StreamCpp (Connect/protobuf over h2)
 cursor_paths.py   platform path resolution — also runnable standalone as a diagnostic
 
+docs/             installation variants, full config reference, troubleshooting
 test/             specs; all of these run in CI on macOS, Linux and Windows
 poc/              protocol spikes kept for reference; never loaded at runtime
 ```
+
+The README is the storefront — pitch, install, usage, and a summary of each
+option. Anything longer than a screen belongs in `docs/`, linked from the
+matching README section. `test/docs_links.py` enforces that those links keep
+resolving.
 
 The Lua side never talks to the network — it speaks line-delimited JSON to the
 sidecar over stdio, and the sidecar owns everything about Cursor's protocol.
@@ -57,6 +63,9 @@ Requires `uv`, Python 3.12+, and Neovim on `PATH`. No test framework to install:
 the specs are plain scripts that exit non-zero on failure.
 
 ```sh
+# every relative link and anchor across README + docs/ resolves
+python test/docs_links.py
+
 # path resolution across all three platform layouts (synthesized, no Cursor needed)
 python test/paths_spec.py
 
