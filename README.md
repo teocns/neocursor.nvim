@@ -170,31 +170,58 @@ Type, pause, and a suggestion appears. Then:
 | `:NeocursorLog` | Toggle the live state dashboard |
 | `:NeocursorDebug` | Print diagnostics |
 
-**The tab-tab-tab flow:** accept a completion → if Cursor predicts an edit
-elsewhere, the ghost turns into a `Tab →` hint → next `<Tab>` *jumps* your cursor
-there → the one after *accepts*. Exactly Cursor's rhythm.
+### The tab-tab-tab flow
+
+One key does three jobs, in Cursor's exact rhythm — accept, then jump, then
+accept again:
+
+```mermaid
+flowchart LR
+    T["you type, then pause"] --> G["ghost text / diff appears"]
+    G -->|Tab| A["edit applied"]
+    A --> Q{"Cursor predicts an<br/>edit elsewhere?"}
+    Q -->|"yes"| P["jump pill appears<br/>⟪Tab → L42⟫"]
+    P -->|Tab| J["cursor jumps there"]
+    J -->|Tab| A
+    Q -->|"no"| T
+```
+
+The loop back through *jump → accept* is what makes it feel like Cursor rather
+than a completion engine: you keep pressing the same key and the edits come to
+you.
 
 ---
 
 ## Configuration
 
-Every option is optional; these are the defaults.
+Every option is optional. This is the complete set, at its defaults:
 
 ```lua
 require("neocursor").setup({
-  debounce    = 250,          -- ms; overridden by Cursor's CppConfig at startup
-  map_tab     = true,         -- false → another plugin owns <Tab>
-  map_partial = "<M-Right>",  -- word-by-word accept; false disables
-  filetypes   = nil,          -- allow-list, e.g. { "python", "lua" }; nil = all
-  show_hints  = true,         -- false → no hint chrome
-  -- how the sidecar is launched; override only for unusual Python setups
+  debounce    = 250,
+  map_tab     = true,
+  map_partial = "<M-Right>",
+  filetypes   = nil,
+  show_hints  = true,
   sidecar_cmd = { "uv", "run", "--with", "httpx[http2]" },
 })
 ```
 
-### `show_hints`
+| Option | Type | Description |
+|---|---|---|
+| `debounce` | `number` | Idle milliseconds before a request. Overridden by Cursor's `CppConfig` at startup. |
+| `map_tab` | `boolean` | `false` leaves `<Tab>` unmapped so nvim-cmp / blink.cmp can own it. |
+| `map_partial` | `string` \| `false` | Key for word-by-word accept. `false` disables it. |
+| `filetypes` | `string[]` \| `nil` | Allow-list, e.g. `{ "python", "lua" }`. `nil` means every normal buffer. |
+| `show_hints` | `boolean` \| `table` | Hint chrome — see below. `false` hides it entirely. |
+| `sidecar_cmd` | `string[]` | How the Python sidecar launches. Override only for unusual setups. |
 
-Controls the two labels neocursor paints. Suggestions are never affected — ghost
+<details>
+<summary><b>Hiding the hint chrome</b> — <code>show_hints</code></summary>
+
+<br>
+
+neocursor paints two labels. Suggestions themselves are never affected — ghost
 text, diffs, and every `<Tab>` behavior are identical either way.
 
 | Surface | Looks like | Hiding it costs |
@@ -211,6 +238,8 @@ show_hints = { prediction = false }   -- hide the pill, keep the label
 Turning the prediction pill off makes pending jumps invisible: `<Tab>` still
 jumps, you just won't see where until it does. `:NeocursorDebug` prints the
 resolved setting.
+
+</details>
 
 ---
 
@@ -246,15 +275,24 @@ Cursor's actual backend. The 🚧 rows are edges, not the main path.
 neocursor doesn't reimplement or retrain a model — it *is* Cursor's Tab, reached
 through a tiny stdio bridge:
 
-```
-  Neovim (Lua) ──JSON──▶ sidecar.py ──Connect/protobuf over h2──▶ Cursor StreamCpp
-   render + <Tab>          reads your Cursor token,                (api2.cursor.sh)
-   accept + jump           forges the checksum, streams edits
+```mermaid
+flowchart LR
+    NV["<b>Neovim</b><br/><code>lua/neocursor</code><br/>ghost text · diffs · owns Tab"]
+    SC["<b>sidecar.py</b><br/>reads your Cursor session<br/>forges the checksum"]
+    CU["<b>Cursor StreamCpp</b><br/><code>api2.cursor.sh</code>"]
+
+    NV -->|"buffer, cursor, edit history<br/>(JSON over stdio)"| SC
+    SC -->|"Connect / protobuf over h2"| CU
+    CU -.->|"streamed edits<br/>+ next-jump target"| SC
+    SC -.->|"JSON"| NV
 ```
 
 The sidecar reads your local Cursor session, speaks the exact `StreamCpp` call
 Cursor's own client makes, and streams back the edit sequence plus the next
-cursor-jump target. See [`NOTICE`](./NOTICE) for rendering-technique attribution.
+cursor-jump target. Your token never leaves the machine, and the Lua side never
+touches the network — that boundary is deliberate.
+
+See [`NOTICE`](./NOTICE) for rendering-technique attribution.
 
 ---
 
