@@ -42,6 +42,7 @@ sidecar.py        stdio bridge: Neovim JSON ⇄ Cursor StreamCpp (Connect/protob
 cursor_paths.py   platform path resolution — also runnable standalone as a diagnostic
 
 docs/             installation variants, full config reference, troubleshooting
+demo/             the recording harness that generates assets/demo.gif
 test/             specs; all of these run in CI on macOS, Linux and Windows
 poc/              protocol spikes kept for reference; never loaded at runtime
 ```
@@ -81,6 +82,10 @@ nvim --headless -u NONE -c "luafile test/hints_spec.lua"
 # the same behavioral suite with hint chrome disabled — chrome must never
 # change behavior, so these assertions must pass identically
 NEOCURSOR_SPEC_NO_HINTS=1 nvim --headless -u NONE -c "luafile test/flow_spec.lua"
+
+# the demo harness, headless: pilots a real Neovim through jump → accept →
+# jump → accept and fails if any beat lands wrong (needs tmux)
+DEMO_ATTACH=0 ./demo/drive.sh
 ```
 
 None of them require you to be signed into Cursor; they synthesize an install
@@ -93,6 +98,30 @@ something a runner can meaningfully exercise.
 Every push and PR runs the full suite on `ubuntu-latest`, `windows-latest` and
 `macos-latest`. Platform matters here more than in most plugins: neocursor reads
 Cursor's session off disk, and that path moves per OS.
+
+The demo harness also runs headlessly on Linux. It is there so that a change to
+the tab flow breaks the build rather than quietly leaving a README GIF that
+shows behavior the plugin no longer has.
+
+---
+
+## Regenerating the demo GIF
+
+`assets/demo.gif` is a build artifact, not a hand-recorded file. Rebuild it with:
+
+```sh
+./demo/record.sh          # needs vhs, tmux, neovim, python3
+```
+
+The recording uses a canned backend, so it works without a Cursor subscription
+and produces essentially the same output every run — which is what makes it
+reviewable in a pull request instead of an opaque binary.
+
+Change what happens on screen in `demo/drive.sh` (keystrokes and pacing) or
+`demo/scenario.py` (the code being edited). Do not change the terminal geometry
+casually: the tape's `906x520` is chosen to yield exactly the 84x20 pane
+`drive.sh` pins tmux to, and anything else reflows the code. `demo/README.md`
+explains the design and the traps in more detail.
 
 ---
 

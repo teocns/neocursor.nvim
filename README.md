@@ -16,12 +16,12 @@
 </p>
 
 <p align="center">
-  <img src="./assets/demo.png" alt="neocursor.nvim: Cursor's Tab predicting the rest of is_prime() as ghost text in Neovim" width="800">
+  <img src="./assets/demo.gif" alt="neocursor.nvim in Neovim: renaming self.retries to self.max_retries, then pressing Tab to jump to each stale call site and accept the rewritten line" width="800">
 </p>
 
 <p align="center">
-  <sub>Typed <code>def is_prime(n):</code> — Cursor predicted the whole body.
-  <code>&lt;Tab&gt;</code> accepts · <code>&lt;Tab&gt;</code> again jumps to the next edit.</sub>
+  <sub>Renamed one field on line 3. The two call sites below are now stale.
+  <code>&lt;Tab&gt;</code> jumps to each one · <code>&lt;Tab&gt;</code> again accepts the rewrite.</sub>
 </p>
 
 No API key. No model to choose. No account to create. If you're already signed
