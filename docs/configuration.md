@@ -94,7 +94,7 @@ purely what you see.
 
 | Surface | Looks like | Marks | Hiding it costs |
 |---|---|---|---|
-| `edit` | `⟪neocursor · <Tab> accept⟫` | a pending edit | nothing — the diff beside it already shows the change |
+| `edit` | `⟪neocursor · <Tab> accept · <Esc> dismiss⟫` | a pending edit | the diff still shows the change, but `<Esc>` stops advertising itself |
 | `prediction` | `⟪<Tab> → L42⟫` | a jump target | the only on-screen sign a jump is queued |
 
 ```lua
@@ -109,10 +109,11 @@ An omitted key in the table form defaults to visible, so `{ edit = false }` and
 
 ### Before you hide the prediction pill
 
-The two surfaces are not symmetrical. The `edit` label is decoration — the diff
-underneath already tells you what will happen. The `prediction` pill is the
-*only* indication that a jump is queued; hide it and `<Tab>` will still jump,
-you just won't know where until it lands.
+The two surfaces are not symmetrical. The `edit` label is mostly decoration —
+the diff underneath already tells you what will happen, though the label is also
+where `<Esc> dismiss` is advertised. The `prediction` pill is the *only*
+indication that a jump is queued; hide it and `<Tab>` will still jump, you just
+won't know where until it lands.
 
 If you want a quieter buffer without losing that, hide the label and keep the
 pill:

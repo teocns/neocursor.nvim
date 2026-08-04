@@ -99,7 +99,8 @@ Type, pause, and a suggestion appears. Then:
 |---|---|
 | `<Tab>` | Accept · or **jump** to the predicted next edit · or chain to the next one |
 | `<M-Right>` | Accept the suggestion word-by-word |
-| `<C-]>` | Dismiss |
+| `<Esc>` | Dismiss — leaving insert mode discards the suggestion and tells the model no |
+| `<C-]>` | Dismiss **without leaving insert**, for when you want to keep typing |
 | `:NeocursorSuggest` | Force a request right now |
 | `:NeocursorLog` | Toggle the live state dashboard |
 | `:NeocursorDebug` | Print diagnostics |
@@ -123,6 +124,24 @@ flowchart LR
 The loop back through *jump → accept* is what makes it feel like Cursor rather
 than a completion engine: you keep pressing the same key and the edits come to
 you.
+
+### Saying no
+
+`<Esc>` is the dismiss key, and it needs no mapping — neocursor never touches
+`<Esc>`, so your macros, your snippet plugin and your IME switcher all keep it.
+Leaving insert mode already discards the suggestion; what neocursor adds is that
+it *counts*, so the same rejected edit isn't offered straight back. This is also
+exactly what Cursor does under a vim layer: its Escape handler dismisses the
+suggestion and lets the keypress through, so the mode change happens too.
+
+Dismissing is tiered, like Cursor's. The first dismiss clears the edit and
+**keeps** the jump target; dismiss again with nothing showing and the jump target
+goes too.
+
+Keep refusing and neocursor takes the hint: after 20 dismissals with nothing
+accepted in between, it stops volunteering on the passive triggers — entering
+insert, moving to another line. Typing still asks, and accepting anything (or
+switching buffers) clears the count. `:NeocursorLog` shows the tally live.
 
 ---
 

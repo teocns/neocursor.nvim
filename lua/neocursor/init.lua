@@ -28,6 +28,9 @@ local state = {
   dbase = {},     -- [bufnr] = { path, text } baseline snapshot for diffing
   dtraj = {},     -- [path]  = { {diff, ts}, ... } committed edit trajectory
   rejects = {},   -- [key]   = times the user dismissed this exact suggestion
+  dismissed = 0,  -- dismissals since the last accept (Cursor:
+                  -- numberOfClearedSuggestionsSinceLastAccept — see the note
+                  -- on rejected_too_many for why we count dismissals, not clears)
   log = {},       -- ring buffer of event strings for :NeocursorLog
   log_buf = nil,
   log_dirty = false,
@@ -150,7 +153,10 @@ local function log_refresh()
     ("  chain     %-16s  heur %d · excl %d · fused %s"):format(chain,
       c.heuristics and #c.heuristics or 0, c.exclude_patterns and #c.exclude_patterns or 0, fused),
     ("  predict   %-16s  guard(seen) %s"):format(pred, seen),
-    ("  err %s · suppress %s"):format(tostring(state.last_error or "none"), tostring(state.last_suppressed or "none")),
+    ("  err %s · suppress %s · dismissed %d/%s%s"):format(
+      tostring(state.last_error or "none"), tostring(state.last_suppressed or "none"),
+      state.dismissed, tostring(c.max_cleared or 20),
+      state.dismissed > (c.max_cleared or 20) and "  MUTED (accept one to resume)" or ""),
     "├─ log ─ newest first " .. string.rep("─", 37) .. "┤",
   }
   for i = #state.log, 1, -1 do lines[#lines + 1] = state.log[i] end
@@ -182,6 +188,7 @@ local function apply_config(cfg)
   if type(cfg.exclude_patterns) == "table" then state.cfg.exclude_patterns = cfg.exclude_patterns end
   if type(cfg.heuristics) == "table" then state.cfg.heuristics = cfg.heuristics end
   if type(cfg.reject_hard) == "number" then state.cfg.reject_hard = cfg.reject_hard end
+  if type(cfg.max_cleared) == "number" then state.cfg.max_cleared = cfg.max_cleared end
   if type(cfg.is_fused) == "boolean" then state.cfg.is_fused = cfg.is_fused end
   log(("CONFIG  debounce=%sms heuristics=%d excludes=%d"):format(
     state.cfg.debounce, #state.cfg.heuristics, #state.cfg.exclude_patterns))
@@ -249,7 +256,12 @@ local function show_edit(edit)
     preview.inline(bufnr, row1 - 1, col0, ghost)
   else
     local at = cursor_at(start0, end0_excl)
-    local label = hints().edit and (at and "<Tab> accept" or "<Tab> jump") or nil
+    -- Advertise <Esc>, not <C-]>: leaving insert already dismisses (InsertLeave
+    -- below files the rejection), so the label is true without mapping a key —
+    -- and it names the one key every neovim user presses without thinking.
+    local label = hints().edit
+      and ((at and "<Tab> accept" or "<Tab> jump") .. " · <Esc> dismiss")
+      or nil
     preview.diff(bufnr, start0, cur_range, lines, label)
   end
   log(("SHOW    %-6s L%d  (%d ln)"):format(mode, start0 + 1, #lines))
@@ -260,6 +272,9 @@ end
 -- no network. Adjust the line numbers of edits below by the applied line delta,
 -- jump the cursor there, and render it. This is the "tab, tab, tab" loop.
 local function advance_after_apply(applied)
+  -- Every accept path lands here — Tab, word-at-a-time, and typing the ghost
+  -- out in full — so this is the one place the churn budget refills.
+  state.dismissed = 0
   local q = state.queue
   if not q then return end
   local delta = #applied.lines - (applied.end0_excl - applied.start0)
@@ -328,6 +343,52 @@ local function pred_recently_rejected(p)
   end
   local r = state.pred_rejects[pred_key(p)]
   return r ~= nil and r.count >= 2
+end
+
+-- Cursor's hasRejectedTooManySuggestions. The per-suggestion ledger above only
+-- catches the model REPEATING itself; this catches it being wrong in a new way
+-- every time. Past the budget, stop volunteering — but only on the passive
+-- triggers (entering insert, moving to another line). Typing still asks, which
+-- is Cursor's split too: their content-change and linter-error paths never
+-- consult this gate. Reset by accepting anything, or by leaving the buffer.
+--
+-- Cursor counts every clearSuggestions(); we count dismissals instead. Their
+-- suggestion survives typing (isOnShortestEditPath), ours only survives it for
+-- inline ghosts — a diff is dropped and refetched on each keystroke, so
+-- counting clears here would mute after ~20 characters rather than ~20 ignored
+-- suggestions. Same intent, adjusted for where the two renderers differ.
+local function rejected_too_many()
+  return state.dismissed > ((state.cfg and state.cfg.max_cleared) or 20)
+end
+
+-- Cursor's Escape is TIERED, and the tiers matter: their first press files the
+-- suggestion as rejected and deliberately keeps the jump target alive (the
+-- handler calls maybeShowHintLineWidget right after); only a second press, with
+-- nothing showing, reaches clearCursorPrediction. Collapsing the two would mute
+-- jump targets the user never actually said no to.
+--
+-- Tier 1 — file the visible edit as rejected and clear it. Returns false when
+-- there was nothing to reject.
+local function reject_suggestion()
+  local s = state.suggestion
+  if not s then return false end
+  local key = reject_key(buf_relpath(s.bufnr) or "", s)
+  state.rejects[key] = (state.rejects[key] or 0) + 1
+  state.dismissed = state.dismissed + 1
+  log(("DISMISS L%d  (rejected ×%d · %d/%s before mute)"):format(
+    s.start0 + 1, state.rejects[key], state.dismissed,
+    tostring((state.cfg and state.cfg.max_cleared) or 20)))
+  clear_suggestion()
+  return true
+end
+
+-- Tier 2 — reject the jump target itself (30s TTL, muted at 2).
+local function reject_prediction(bufnr)
+  if not state.prediction then return false end
+  record_pred_reject(state.prediction)
+  state.prediction = nil
+  preview.clear_prediction(bufnr or 0)
+  return true
 end
 
 -- Paint the "Tab →" hint at the prediction target (Cursor's hint widget).
@@ -998,19 +1059,15 @@ function M.has_prediction() return state.prediction ~= nil end
 -- exposed for test/hints_spec.lua; pure, no state
 M._normalize_hints = normalize_hints
 
+-- Dismiss without leaving insert mode. <Esc> does the same thing and then exits
+-- insert; this is the variant for when you want to keep typing. <C-]> is the
+-- key copilot.vim, copilot.lua and avante.nvim all use for it.
 function M.dismiss()
-  local s = state.suggestion
-  if s then
-    local key = reject_key(vim.fn.expand("%:."), s)
-    state.rejects[key] = (state.rejects[key] or 0) + 1
-    log(("DISMISS L%d  (rejected ×%d)"):format(s.start0 + 1, state.rejects[key]))
-  end
-  if state.prediction then
-    record_pred_reject(state.prediction) -- muted after 2 rejections within 30s
-    state.prediction = nil
-    preview.clear_prediction(0)
-  end
-  clear_suggestion()
+  local bufnr = vim.api.nvim_get_current_buf()
+  -- tier 1 first, tier 2 only when there was no edit to dismiss — press it
+  -- twice to clear an edit and then its jump target, exactly like Cursor.
+  if not reject_suggestion() then reject_prediction(bufnr) end
+  cancel_timer() -- a request already in the debounce would repaint what we just cleared
 end
 
 function M.log()
@@ -1059,6 +1116,7 @@ function M.setup(opts)
     exclude_patterns = {},           -- filled from CppConfig (skip .env/.pem/... as context)
     heuristics = {},                 -- filled from CppConfig (active suppression rules)
     reject_hard = 2,
+    max_cleared = 20,                -- CppConfig maxNumberOfClearedSuggestionsSinceLastAccept
     is_fused = nil,                  -- CppConfig isFusedCursorPredictionModel (nil = unknown)
     map_partial = opts.map_partial ~= false
       and (type(opts.map_partial) == "string" and opts.map_partial or "<M-Right>")
@@ -1107,7 +1165,7 @@ function M.setup(opts)
         else
           local line_changed = prev_line ~= cur[1]
           local reading = not state.last_edit_at or (os.time() - state.last_edit_at) >= 60
-          if line_changed and not reading then
+          if line_changed and not reading and not rejected_too_many() then
             schedule_request()
           end
         end
@@ -1118,7 +1176,8 @@ function M.setup(opts)
     group = grp,
     callback = function()
       state.last_line = vim.api.nvim_win_get_cursor(0)[1] -- baseline; first move isn't a "line change"
-      schedule_request(true) -- request at the entry point
+      if rejected_too_many() then return end -- Cursor gates its EditorChange trigger the same way
+      schedule_request(true)                 -- request at the entry point
     end,
   })
   vim.api.nvim_create_autocmd({ "InsertLeave", "BufLeave" }, {
@@ -1126,9 +1185,18 @@ function M.setup(opts)
     callback = function(args)
       commit_diff(args.buf) -- coalesce the just-finished edit into the trajectory
       cancel_timer()        -- don't fire a request for a buffer we just left
-      clear_suggestion()
+      -- <Esc> lands here, and this is the whole reason it counts as a dismiss:
+      -- Cursor's Escape files a hard rejection before clearing, so ours must
+      -- too, or the identical suggestion returns the moment you re-enter insert.
+      reject_suggestion()
+      -- The jump target is dropped but NOT filed as rejected: leaving insert is
+      -- a mode change, not a "no" to where the model wanted to send you.
       state.prediction = nil
       preview.clear_prediction(args.buf)
+      -- Leaving the buffer is our analogue of Cursor's onDidBlurEditorText:
+      -- come back to a clean slate. Merely leaving insert is not — that happens
+      -- constantly in neovim, and resetting there would defang the budget.
+      if args.event == "BufLeave" then state.dismissed = 0 end
     end,
   })
   vim.api.nvim_create_autocmd("BufEnter", {
@@ -1181,6 +1249,8 @@ function M.setup(opts)
         .. "  excludes=" .. #state.cfg.exclude_patterns,
       "hints       : edit=" .. tostring(hints().edit) .. "  prediction=" .. tostring(hints().prediction),
       "last suppress: " .. tostring(state.last_suppressed or "none"),
+      "dismissed   : " .. state.dismissed .. "/" .. tostring(state.cfg.max_cleared or 20)
+        .. (rejected_too_many() and "  (muted — passive triggers off until you accept)" or ""),
       "buffer      : buftype='" .. vim.bo.buftype .. "'  filetype='" .. vim.bo.filetype .. "'",
       "attach ok   : " .. tostring(should_attach(vim.api.nvim_get_current_buf())),
       "ctx files   : " .. tostring(#collect_additional_files(dbuf)),

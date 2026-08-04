@@ -326,6 +326,7 @@ def main():
         "exclude_patterns": cfg.get("excludeRecentlyViewedFilesPatterns") or [],
         "heuristics": cfg.get("heuristics") or [],
         "reject_hard": (cfg.get("recentlyRejectedEditThresholds") or {}).get("hardRejectThreshold"),
+        "max_cleared": cfg.get("maxNumberOfClearedSuggestionsSinceLastAccept"),
         "is_fused": cfg.get("isFusedCursorPredictionModel"),
     }}) + "\n")
     sys.stdout.flush()
