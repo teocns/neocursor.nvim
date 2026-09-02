@@ -8,6 +8,7 @@
 -- suggestions surviving the echo events of our own apply/jump, two-phase
 -- jump→accept, chain advance, and rapid tab-tab-tab never leaking a literal
 -- <Tab> into the buffer.
+-- an accept never copying a buffer-local 'undolevels' into the global option.
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":h:h")
 vim.opt.rtp:prepend(root)
 vim.opt.swapfile = false -- a stale swap prompt would hang a headless run
@@ -162,6 +163,27 @@ local function round5()
   end)
 end
 
+-- Round 6: panel buffers (diffview/mason/neogit-style) set buffer-local
+-- 'undolevels' to -1/0. Accepting must close the undo block WITHOUT copying
+-- that local value into the global option — a leak disables undo everywhere.
+local function round6()
+  poll(nc.has_suggestion, 3000, function()
+    check("suggestion arrives (round 6)", true, true)
+    local before = vim.api.nvim_get_option_value("undolevels", { scope = "global" })
+    input("<Tab>")
+    later(120, function()
+      check("accept applies edit with local undolevels", line(1), "line1 = 100")
+      local after = vim.api.nvim_get_option_value("undolevels", { scope = "global" })
+      check("accept leaves global 'undolevels' unchanged", after, before)
+      vim.cmd("setlocal undolevels<") -- drop the buffer-local override
+      input("<Esc>")
+    end)
+  end, function()
+    check("suggestion arrives (round 6)", false, true)
+    input("<Esc>")
+  end)
+end
+
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
 later(50, round1)
 feed("Ax") -- blocks while round1 runs; returns on its <Esc>
@@ -185,6 +207,12 @@ vim.api.nvim_buf_set_lines(0, 0, -1, false, seed)
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
 later(50, round5)
 feed("A0") -- "line1 = 10" is a prefix of the fake's edit → inline ghost "0"
+
+vim.api.nvim_buf_set_lines(0, 0, -1, false, seed)
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.api.nvim_set_option_value("undolevels", -1, { buf = 0 }) -- what panel buffers do
+later(50, round6)
+feed("A6") -- blocks while round6 runs; returns on its <Esc>
 
 io.stdout:write(failed == 0 and "ALL PASS\n" or (failed .. " FAILURES\n"))
 vim.cmd(failed == 0 and "qall!" or "cquit!")
