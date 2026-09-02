@@ -884,7 +884,7 @@ local function do_accept(s)
   preview.clear(s.bufnr)
   state.suggestion = nil
   cancel_timer() -- a request scheduled before the accept would race the chain
-  vim.cmd("let &undolevels=&undolevels") -- one undo reverts the whole accept
+  vim.cmd("let &g:undolevels=&g:undolevels") -- one undo reverts the whole accept
   local lc = vim.api.nvim_buf_line_count(s.bufnr)
   vim.api.nvim_buf_set_lines(s.bufnr, s.start0, math.min(s.end0_excl, lc), false, s.lines)
   local pos = { s.start0 + #s.lines, #(s.lines[#s.lines] or "") }
