@@ -194,6 +194,15 @@ local function apply_config(cfg)
     state.cfg.debounce, #state.cfg.heuristics, #state.cfg.exclude_patterns))
 end
 
+-- Suggestions live in insert mode. Every key that acts on one — <Tab>,
+-- <M-Right>, <C-]> — is an insert mapping, so a suggestion painted anywhere
+-- else is chrome nobody can answer: that is exactly what a reply landing a few
+-- hundred ms after <Esc> used to leave on screen (#10). Replace mode counts
+-- as inserting; <C-o>'s temporary normal (niI) and everything else does not.
+local function inserting()
+  return vim.api.nvim_get_mode().mode:match("^[iR]") ~= nil
+end
+
 -- Is the cursor currently on the edit's target region? This is Cursor's
 -- `cursorAtInlineEdit`: when false, <Tab> jumps here; when true, <Tab> accepts.
 local function cursor_at(start0, end0_excl)
@@ -256,8 +265,9 @@ local function show_edit(edit)
     preview.inline(bufnr, row1 - 1, col0, ghost)
   else
     local at = cursor_at(start0, end0_excl)
-    -- Advertise <Esc>, not <C-]>: leaving insert already dismisses (InsertLeave
-    -- below files the rejection), so the label is true without mapping a key —
+    -- Advertise <Esc>, not <C-]>: leaving insert already dismisses (the
+    -- ModeChanged handler in setup files the rejection), so the label is true
+    -- without mapping a key —
     -- and it names the one key every neovim user presses without thinking.
     local label = hints().edit
       and ((at and "<Tab> accept" or "<Tab> jump") .. " · <Esc> dismiss")
@@ -426,6 +436,13 @@ local function render_result(res)
   local rq = state.req
   if rq and (rq.bufnr ~= bufnr or vim.api.nvim_buf_get_changedtick(bufnr) ~= rq.tick) then
     log("DROP    stale response (buffer changed since request)")
+    return
+  end
+  -- the request went out in insert mode, but the reply is landing now — if
+  -- the user has since left insert there is nothing here that can act on it,
+  -- and the next InsertEnter asks afresh anyway
+  if not inserting() then
+    log(("DROP    reply landed outside insert (mode=%s)"):format(vim.api.nvim_get_mode().mode))
     return
   end
   -- adopt this response's prediction target (or drop a stale/muted one)
@@ -700,7 +717,7 @@ local function collect_linter_errors(buf, path)
 end
 
 -- diff trajectory: baseline snapshot per buffer; unified diff baseline→current is
--- the edit. commit_diff() coalesces at logical boundaries (InsertLeave/BufLeave).
+-- the edit. commit_diff() coalesces at logical boundaries (leaving insert/BufLeave).
 local MAX_TRAJ, DIFF_CAP = 6, 4000
 
 local function ensure_baseline(buf, path)
@@ -1058,6 +1075,9 @@ function M.has_prediction() return state.prediction ~= nil end
 
 -- exposed for test/hints_spec.lua; pure, no state
 M._normalize_hints = normalize_hints
+-- exposed for test/modes_spec.lua: the event log, oldest first, so a round can
+-- assert *why* a suggestion is gone (DISMISS vs DROP), not just that it is
+function M._log_lines() return vim.deepcopy(state.log) end
 
 -- Dismiss without leaving insert mode. <Esc> does the same thing and then exits
 -- insert; this is the variant for when you want to keep typing. <C-]> is the
@@ -1180,24 +1200,47 @@ function M.setup(opts)
       schedule_request(true)                 -- request at the entry point
     end,
   })
-  vim.api.nvim_create_autocmd({ "InsertLeave", "BufLeave" }, {
+  -- Leaving insert ends the suggestion. Whether it *counts* depends on how you
+  -- left:
+  --   "dismiss"  <Esc>, <C-c>, <C-\><C-n> — a "no". Cursor's Escape files a hard
+  --              rejection before clearing, so ours must too, or the identical
+  --              suggestion returns the moment you re-enter insert.
+  --   "detour"   <C-o> — one normal command, then straight back. Not a "no":
+  --              the display goes (the command may edit the buffer under it),
+  --              but nothing is filed, so the return trip re-offers it.
+  --   "buffer"   BufLeave — our analogue of Cursor's onDidBlurEditorText: come
+  --              back to a clean slate.
+  -- The jump target is dropped every time but NEVER filed as rejected: leaving
+  -- insert is a mode change, not a "no" to where the model wanted to send you.
+  local function on_leave(buf, how)
+    commit_diff(buf) -- coalesce the just-finished edit into the trajectory
+    cancel_timer()   -- don't fire a request for a mode/buffer we just left
+    if how == "detour" then clear_suggestion() else reject_suggestion() end
+    state.prediction = nil
+    preview.clear_prediction(buf)
+    -- Only a buffer switch resets the churn budget. Merely leaving insert
+    -- happens constantly in neovim, and resetting there would defang it.
+    if how == "buffer" then state.dismissed = 0 end
+  end
+  -- ModeChanged, not InsertLeave: <C-c> exits insert WITHOUT firing InsertLeave
+  -- (:h i_CTRL-C), which left the suggestion painted in normal mode where no
+  -- key could reach it. ModeChanged sees every exit — for an unmapped <C-c>
+  -- (an interrupt, not a keypress) Neovim defers it past got_int and fires it
+  -- from normal_check, still before any other key is read. The pattern admits
+  -- every insert/replace variant as the old mode; the callback then ignores
+  -- hops that stay inside insert (i → ic while a completion menu is up, and back).
+  vim.api.nvim_create_autocmd("ModeChanged", {
     group = grp,
+    pattern = "[iR]*:*",
     callback = function(args)
-      commit_diff(args.buf) -- coalesce the just-finished edit into the trajectory
-      cancel_timer()        -- don't fire a request for a buffer we just left
-      -- <Esc> lands here, and this is the whole reason it counts as a dismiss:
-      -- Cursor's Escape files a hard rejection before clearing, so ours must
-      -- too, or the identical suggestion returns the moment you re-enter insert.
-      reject_suggestion()
-      -- The jump target is dropped but NOT filed as rejected: leaving insert is
-      -- a mode change, not a "no" to where the model wanted to send you.
-      state.prediction = nil
-      preview.clear_prediction(args.buf)
-      -- Leaving the buffer is our analogue of Cursor's onDidBlurEditorText:
-      -- come back to a clean slate. Merely leaving insert is not — that happens
-      -- constantly in neovim, and resetting there would defang the budget.
-      if args.event == "BufLeave" then state.dismissed = 0 end
+      local new_mode = vim.v.event.new_mode
+      if new_mode:match("^[iR]") then return end
+      on_leave(args.buf, new_mode:match("^ni") and "detour" or "dismiss")
     end,
+  })
+  vim.api.nvim_create_autocmd("BufLeave", {
+    group = grp,
+    callback = function(args) on_leave(args.buf, "buffer") end,
   })
   vim.api.nvim_create_autocmd("BufEnter", {
     group = grp,

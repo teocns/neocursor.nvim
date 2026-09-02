@@ -114,8 +114,10 @@ Work down this list in order:
    navigate rather than firing on every cursor move. Type a little, then pause.
 
 4. **Force one.** `:NeocursorSuggest` bypasses the debounce and requests
-   immediately. If that produces a suggestion, the plumbing is fine and you were
-   hitting gating, not a bug.
+   immediately. Suggestions only render in insert mode, so run it from there —
+   `<C-o>:NeocursorSuggest<CR>` — or just watch the reply arrive in the log
+   (next step): a `RES` line carrying edits means the plumbing is fine and you
+   were hitting gating, not a bug.
 
 5. **Watch it live.** `:NeocursorLog` shows requests going out and what comes
    back, including responses dropped as stale.
@@ -124,8 +126,9 @@ Work down this list in order:
 
 ## `<Tab>` does nothing
 
-Almost always another plugin owns the mapping. nvim-cmp, blink.cmp, LuaSnip and
-most snippet engines map `<Tab>` in insert mode.
+In Normal mode, that's by design: suggestions only exist in insert mode, and so
+does the `<Tab>` mapping. In insert mode, almost always another plugin owns the
+mapping. nvim-cmp, blink.cmp, LuaSnip and most snippet engines map `<Tab>` there.
 
 Check who has it:
 

@@ -79,6 +79,10 @@ nvim --headless -u NONE -c "luafile test/flow_spec.lua"
 # hint chrome: rendering + show_hints normalization
 nvim --headless -u NONE -c "luafile test/hints_spec.lua"
 
+# insert-only: a reply landing after <Esc> is dropped, <C-c> dismisses like
+# <Esc>, <C-o> is a detour — driven through Neovim's real main loop
+nvim --headless -u NONE -c "luafile test/modes_spec.lua"
+
 # the same behavioral suite with hint chrome disabled — chrome must never
 # change behavior, so these assertions must pass identically
 NEOCURSOR_SPEC_NO_HINTS=1 nvim --headless -u NONE -c "luafile test/flow_spec.lua"

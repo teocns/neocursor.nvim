@@ -51,6 +51,9 @@ jobs:
       - name: hint chrome spec (show_hints rendering + normalization)
         run: nvim --headless -u NONE -c "luafile test/hints_spec.lua"
 
+      - name: insert-only spec (reply after <Esc> dropped, <C-c> dismisses, <C-o> detours)
+        run: nvim --headless -u NONE -c "luafile test/modes_spec.lua"
+
       - name: tab-flow spec with hints off (chrome must not change behavior)
         env:
           NEOCURSOR_SPEC_NO_HINTS: "1"

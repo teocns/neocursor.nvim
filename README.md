@@ -134,6 +134,13 @@ it *counts*, so the same rejected edit isn't offered straight back. This is also
 exactly what Cursor does under a vim layer: its Escape handler dismisses the
 suggestion and lets the keypress through, so the mode change happens too.
 
+Suggestions live in insert mode, full stop. However you leave — `<Esc>`,
+`<C-c>`, `<C-\><C-n>` — the suggestion leaves with you, and a reply that
+arrives after you've gone is dropped rather than painted into Normal mode,
+where no key could reach it. The one exception is `<C-o>`: a single Normal
+command is a detour, not a no. The suggestion clears while the command runs
+and is re-offered when you land back in insert, without counting against it.
+
 Dismissing is tiered, like Cursor's. The first dismiss clears the edit and
 **keeps** the jump target; dismiss again with nothing showing and the jump target
 goes too.
